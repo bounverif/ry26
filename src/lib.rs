@@ -29,7 +29,7 @@ pub fn add(left: u64, right: u64) -> u64 {
 pub fn generate_random_data_point() -> DataPoint {
     let mut rng = rand::thread_rng();
     let now: DateTime<Utc> = Utc::now();
-    
+
     DataPoint {
         id: rng.gen_range(1..1000),
         value: rng.gen_range(0.0..100.0),
@@ -72,11 +72,11 @@ mod tests {
             value: 3.14,
             timestamp: "2025-10-26T13:00:00Z".to_string(),
         };
-        
+
         let json = to_json(&data).unwrap();
         assert!(json.contains("42"));
         assert!(json.contains("3.14"));
-        
+
         let deserialized = from_json(&json).unwrap();
         assert_eq!(data, deserialized);
     }
