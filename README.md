@@ -8,6 +8,7 @@ A simple Rust library with command line interface for data point generation and 
 - Generate random data points with timestamps
 - JSON serialization and deserialization
 - Command line interface for all library functions
+- **Double buffering with object pool** - Efficient sequential update of object vectors using memory pooling
 
 ## Installation
 
@@ -83,6 +84,41 @@ let json = to_json(&data).unwrap();
 // Parse from JSON
 let parsed = from_json(&json).unwrap();
 ```
+
+### Double Buffering with Object Pool
+
+The library includes a double buffering system with object pooling for efficient management of collections:
+
+```rust
+use ry26::{DoubleBuffer, ObjectPool, DataPoint};
+
+// Create a double buffer with object pooling
+let mut buffer: DoubleBuffer<DataPoint> = DoubleBuffer::new(10);
+
+// Write to back buffer
+buffer.back_mut().push(DataPoint {
+    id: 1,
+    value: 42.0,
+    timestamp: "2025-10-27T12:00:00Z".to_string(),
+});
+
+// Swap buffers - back becomes front, old front returns to pool
+buffer.swap();
+
+// Read from front buffer while writing to back
+let front_data = buffer.front();
+buffer.back_mut().push(/* new data */);
+
+// Use ObjectPool independently
+let mut pool: ObjectPool<i32> = ObjectPool::new(5);
+let vec = pool.acquire();
+pool.release(vec);  // Returns vector to pool for reuse
+```
+
+The double buffering technique allows for:
+- **Non-blocking reads**: Front buffer can be read while back buffer is being written
+- **Sequential updates**: Swap buffers to atomically update the collection
+- **Memory efficiency**: Object pool reuses allocated vectors, reducing allocations
 
 ## Testing
 
