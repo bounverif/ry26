@@ -47,6 +47,142 @@ pub fn from_json(json: &str) -> Result<DataPoint, LibraryError> {
     Ok(serde_json::from_str(json)?)
 }
 
+/// Flat object pool using a single contiguous buffer with begin/end pointers.
+///
+/// This structure uses a single flat `Vec<T>` as backing storage and tracks
+/// vector slices using (begin, end) index pairs. This approach provides better
+/// cache locality and reduces memory fragmentation compared to storing multiple
+/// separate vectors.
+///
+/// # Examples
+///
+/// ```
+/// use ry26::FlatObjectPool;
+///
+/// let mut pool: FlatObjectPool<i32> = FlatObjectPool::new(100, 5);
+///
+/// // Acquire a slice from the pool
+/// let (begin, end) = pool.acquire(10);
+///
+/// // Access the data via the pool
+/// for i in begin..end {
+///     pool.set(i, i as i32 * 2);
+/// }
+///
+/// // Release the slice back to the pool
+/// pool.release(begin, end);
+/// ```
+#[derive(Debug)]
+pub struct FlatObjectPool<T> {
+    buffer: Vec<T>,
+    free_ranges: Vec<(usize, usize)>, // (begin, end) pairs
+    capacity: usize,
+}
+
+impl<T: Default + Clone> FlatObjectPool<T> {
+    /// Create a new flat object pool with the specified buffer size and capacity
+    ///
+    /// # Arguments
+    /// * `buffer_size` - Total size of the backing buffer
+    /// * `capacity` - Maximum number of free ranges to track
+    pub fn new(buffer_size: usize, capacity: usize) -> Self {
+        Self {
+            buffer: vec![T::default(); buffer_size],
+            free_ranges: Vec::with_capacity(capacity),
+            capacity,
+        }
+    }
+
+    /// Acquire a slice of the specified size from the pool.
+    ///
+    /// Returns (begin, end) indices for the acquired slice.
+    /// If no suitable range is available, extends the buffer.
+    pub fn acquire(&mut self, size: usize) -> (usize, usize) {
+        // Try to find a free range that fits
+        for i in 0..self.free_ranges.len() {
+            let (begin, end) = self.free_ranges[i];
+            let range_size = end - begin;
+            
+            if range_size >= size {
+                // Use this range
+                self.free_ranges.remove(i);
+                
+                // If range is larger than needed, return the excess
+                if range_size > size {
+                    let new_begin = begin + size;
+                    if self.free_ranges.len() < self.capacity {
+                        self.free_ranges.push((new_begin, end));
+                    }
+                }
+                
+                return (begin, begin + size);
+            }
+        }
+        
+        // No suitable range found, extend buffer
+        let begin = self.buffer.len();
+        let end = begin + size;
+        self.buffer.resize(end, T::default());
+        (begin, end)
+    }
+
+    /// Release a slice back to the pool for reuse.
+    ///
+    /// The slice data is cleared and the range is added to the free list.
+    pub fn release(&mut self, begin: usize, end: usize) {
+        if begin >= end || end > self.buffer.len() {
+            return; // Invalid range
+        }
+        
+        // Clear the range
+        for i in begin..end {
+            self.buffer[i] = T::default();
+        }
+        
+        // Add to free ranges if capacity allows
+        if self.free_ranges.len() < self.capacity {
+            self.free_ranges.push((begin, end));
+        }
+    }
+
+    /// Get a reference to an element in the buffer
+    pub fn get(&self, index: usize) -> Option<&T> {
+        self.buffer.get(index)
+    }
+
+    /// Get a mutable reference to an element in the buffer
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
+        self.buffer.get_mut(index)
+    }
+
+    /// Set the value at the specified index
+    pub fn set(&mut self, index: usize, value: T) {
+        if index < self.buffer.len() {
+            self.buffer[index] = value;
+        }
+    }
+
+    /// Get a slice of the buffer
+    pub fn get_slice(&self, begin: usize, end: usize) -> &[T] {
+        &self.buffer[begin..end]
+    }
+
+    /// Get a mutable slice of the buffer
+    pub fn get_slice_mut(&mut self, begin: usize, end: usize) -> &mut [T] {
+        &mut self.buffer[begin..end]
+    }
+
+    /// Get the number of available free ranges in the pool
+    pub fn available_count(&self) -> usize {
+        self.free_ranges.len()
+    }
+
+    /// Get the total buffer size
+    pub fn buffer_size(&self) -> usize {
+        self.buffer.len()
+    }
+}
+
 /// Object pool for managing reusable vector objects.
 ///
 /// This structure maintains a pool of pre-allocated vectors that can be reused,

@@ -9,6 +9,7 @@ A simple Rust library with command line interface for data point generation and 
 - JSON serialization and deserialization
 - Command line interface for all library functions
 - **Double buffering with object pool** - Efficient sequential update of object vectors using memory pooling
+- **Flat object pool** - Advanced memory management with contiguous storage and begin/end pointers for better cache locality
 
 ## Installation
 
@@ -162,10 +163,37 @@ let vec = pool.acquire();
 pool.release(vec);  // Returns vector to pool for reuse
 ```
 
+#### FlatObjectPool - Advanced Memory Management
+
+For even better cache locality and reduced fragmentation, use the flat object pool with begin/end pointers:
+
+```rust
+use ry26::FlatObjectPool;
+
+// Create a flat pool with buffer size 1000 and capacity for 10 free ranges
+let mut pool: FlatObjectPool<i32> = FlatObjectPool::new(1000, 10);
+
+// Acquire a slice of 50 elements
+let (begin, end) = pool.acquire(50);
+
+// Work with the slice
+for i in begin..end {
+    pool.set(i, i as i32 * 2);
+}
+
+// Get values
+let slice = pool.get_slice(begin, end);
+println!("Slice length: {}", slice.len());
+
+// Release back to pool when done
+pool.release(begin, end);
+```
+
 The double buffering technique allows for:
 - **Non-blocking reads**: Front buffer can be read while back buffer is being written
 - **Sequential updates**: Swap buffers to atomically update the collection
 - **Memory efficiency**: Object pool reuses allocated vectors, reducing allocations
+- **Flat memory layout**: FlatObjectPool provides better cache locality with contiguous storage
 - **Step tracking**: DataPointSequence automatically tracks update steps
 
 ## Testing
