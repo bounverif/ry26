@@ -89,8 +89,44 @@ let parsed = from_json(&json).unwrap();
 
 The library includes a double buffering system with object pooling for efficient management of collections:
 
+#### DataPointSequence - High-Level API
+
+For managing sequences of DataPoints with automatic step tracking:
+
 ```rust
-use ry26::{DoubleBuffer, ObjectPool, DataPoint};
+use ry26::{DataPointSequence, DataPoint};
+
+// Create a sequence with object pooling
+let mut sequence = DataPointSequence::new(10);
+
+// Add data points for the next step
+sequence.add_point(DataPoint {
+    id: 1,
+    value: 42.0,
+    timestamp: "2025-10-27T12:00:00Z".to_string(),
+});
+
+// Update the sequence (swap buffers and increment step)
+sequence.update();
+
+// Read current sequence
+let current = sequence.current();
+println!("Step {}: {} points", sequence.step(), current.len());
+
+// Add multiple points for next step
+sequence.add_points(vec![
+    DataPoint { id: 2, value: 84.0, timestamp: "2025-10-27T12:01:00Z".to_string() },
+    DataPoint { id: 3, value: 126.0, timestamp: "2025-10-27T12:02:00Z".to_string() },
+]);
+sequence.update();
+```
+
+#### DoubleBuffer - Low-Level API
+
+For more control over double buffering with any type:
+
+```rust
+use ry26::{DoubleBuffer, DataPoint};
 
 // Create a double buffer with object pooling
 let mut buffer: DoubleBuffer<DataPoint> = DoubleBuffer::new(10);
@@ -112,8 +148,15 @@ buffer.back_mut().push(DataPoint {
     value: 84.0,
     timestamp: "2025-10-27T12:01:00Z".to_string(),
 });
+```
 
-// Use ObjectPool independently
+#### ObjectPool - Memory Management
+
+Use the object pool independently for efficient vector reuse:
+
+```rust
+use ry26::ObjectPool;
+
 let mut pool: ObjectPool<i32> = ObjectPool::new(5);
 let vec = pool.acquire();
 pool.release(vec);  // Returns vector to pool for reuse
@@ -123,6 +166,7 @@ The double buffering technique allows for:
 - **Non-blocking reads**: Front buffer can be read while back buffer is being written
 - **Sequential updates**: Swap buffers to atomically update the collection
 - **Memory efficiency**: Object pool reuses allocated vectors, reducing allocations
+- **Step tracking**: DataPointSequence automatically tracks update steps
 
 ## Testing
 

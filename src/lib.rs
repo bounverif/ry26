@@ -71,6 +71,7 @@ pub fn from_json(json: &str) -> Result<DataPoint, LibraryError> {
 /// let vec2 = pool.acquire();
 /// assert_eq!(vec2.len(), 0);
 /// ```
+#[derive(Debug)]
 pub struct ObjectPool<T> {
     available: Vec<Vec<T>>,
     capacity: usize,
@@ -146,6 +147,7 @@ impl<T> ObjectPool<T> {
 ///     timestamp: "2025-10-27T12:01:00Z".to_string(),
 /// });
 /// ```
+#[derive(Debug)]
 pub struct DoubleBuffer<T> {
     front: Vec<T>,
     back: Vec<T>,
@@ -201,5 +203,99 @@ impl<T: Clone> DoubleBuffer<T> {
     /// Get the number of available vectors in the pool
     pub fn pool_available(&self) -> usize {
         self.pool.available_count()
+    }
+}
+
+/// A sequence of DataPoint objects that can be efficiently updated using double buffering.
+///
+/// `DataPointSequence` wraps a `DoubleBuffer<DataPoint>` to provide a specialized
+/// interface for managing sequences of data points. This allows for efficient
+/// sequential updates where new data points can be added to the back buffer while
+/// the front buffer remains available for reading.
+///
+/// # Examples
+///
+/// ```
+/// use ry26::{DataPointSequence, DataPoint};
+///
+/// let mut sequence = DataPointSequence::new(10);
+///
+/// // Add data points to the sequence
+/// sequence.add_point(DataPoint {
+///     id: 1,
+///     value: 10.0,
+///     timestamp: "2025-10-27T12:00:00Z".to_string(),
+/// });
+///
+/// // Update the sequence (swap buffers)
+/// sequence.update();
+///
+/// // Read current sequence
+/// let current = sequence.current();
+/// assert_eq!(current.len(), 1);
+/// ```
+#[derive(Debug)]
+pub struct DataPointSequence {
+    buffer: DoubleBuffer<DataPoint>,
+    step: usize,
+}
+
+impl DataPointSequence {
+    /// Create a new DataPointSequence with the specified pool capacity
+    pub fn new(pool_capacity: usize) -> Self {
+        Self {
+            buffer: DoubleBuffer::new(pool_capacity),
+            step: 0,
+        }
+    }
+
+    /// Get the current step number (number of updates performed)
+    pub fn step(&self) -> usize {
+        self.step
+    }
+
+    /// Add a data point to the next sequence (back buffer)
+    pub fn add_point(&mut self, point: DataPoint) {
+        self.buffer.back_mut().push(point);
+    }
+
+    /// Add multiple data points to the next sequence (back buffer)
+    pub fn add_points(&mut self, points: impl IntoIterator<Item = DataPoint>) {
+        self.buffer.back_mut().extend(points);
+    }
+
+    /// Update the sequence by swapping buffers and incrementing the step counter.
+    ///
+    /// This makes the back buffer (with newly added points) become the current
+    /// sequence, and prepares a fresh back buffer for the next update.
+    pub fn update(&mut self) {
+        self.buffer.swap();
+        self.step += 1;
+    }
+
+    /// Get a reference to the current sequence (front buffer)
+    pub fn current(&self) -> &[DataPoint] {
+        self.buffer.front()
+    }
+
+    /// Get the number of data points in the current sequence
+    pub fn len(&self) -> usize {
+        self.buffer.front().len()
+    }
+
+    /// Check if the current sequence is empty
+    pub fn is_empty(&self) -> bool {
+        self.buffer.front().is_empty()
+    }
+
+    /// Clear all data points from both buffers and reset the step counter
+    pub fn clear(&mut self) {
+        self.buffer.clear();
+        self.step = 0;
+    }
+
+    /// Get the number of available vectors in the underlying object pool
+    pub fn pool_available(&self) -> usize {
+        self.buffer.pool_available()
     }
 }
