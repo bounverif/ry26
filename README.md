@@ -107,7 +107,11 @@ buffer.swap();
 
 // Read from front buffer while writing to back
 let front_data = buffer.front();
-buffer.back_mut().push(/* new data */);
+buffer.back_mut().push(DataPoint {
+    id: 2,
+    value: 84.0,
+    timestamp: "2025-10-27T12:01:00Z".to_string(),
+});
 
 // Use ObjectPool independently
 let mut pool: ObjectPool<i32> = ObjectPool::new(5);

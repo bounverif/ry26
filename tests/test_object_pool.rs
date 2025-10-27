@@ -116,14 +116,9 @@ fn test_object_pool_with_different_types() {
 fn test_object_pool_large_capacity() {
     let mut pool: ObjectPool<i32> = ObjectPool::new(1000);
 
-    // Create and release many vectors
-    let mut vecs = Vec::new();
+    // Release many vectors directly to the pool
     for _ in 0..100 {
-        vecs.push(Vec::new());
-    }
-
-    for vec in vecs {
-        pool.release(vec);
+        pool.release(Vec::new());
     }
 
     assert_eq!(pool.available_count(), 100);
