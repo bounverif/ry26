@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// A simple data structure that demonstrates serialization
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct DataPoint {
     pub id: u64,
     pub value: f64,
@@ -155,11 +155,12 @@ impl<T: Default + Clone> FlatObjectPool<T> {
         self.buffer.get_mut(index)
     }
 
-    /// Set the value at the specified index
+    /// Set the value at the specified index, extending the buffer if necessary
     pub fn set(&mut self, index: usize, value: T) {
-        if index < self.buffer.len() {
-            self.buffer[index] = value;
+        if index >= self.buffer.len() {
+            self.buffer.resize(index + 1, T::default());
         }
+        self.buffer[index] = value;
     }
 
     /// Get a slice of the buffer
@@ -342,45 +343,61 @@ impl<T: Clone> DoubleBuffer<T> {
     }
 }
 
-/// A sequence of DataPoint objects that can be efficiently updated using double buffering.
+/// A sequence of DataPoint objects that accumulates immutably over time.
 ///
-/// `DataPointSequence` wraps a `DoubleBuffer<DataPoint>` to provide a specialized
-/// interface for managing sequences of data points. This allows for efficient
-/// sequential updates where new data points can be added to the back buffer while
-/// the front buffer remains available for reading.
+/// `DataPointSequence` uses a `FlatObjectPool` to manage an append-only sequence
+/// of data points. Objects are never erased within a step - they accumulate in the
+/// flat buffer, providing an immutable history of all data points added.
+///
+/// Each step adds new data points to the sequence, and the sequence grows over time.
+/// The design uses begin/end pointers to track the current extent of the sequence.
 ///
 /// # Examples
 ///
 /// ```
 /// use ry26::{DataPointSequence, DataPoint};
 ///
-/// let mut sequence = DataPointSequence::new(10);
+/// let mut sequence = DataPointSequence::new(1000, 10);
 ///
-/// // Add data points to the sequence
+/// // Step 1: Add initial data points
 /// sequence.add_point(DataPoint {
 ///     id: 1,
 ///     value: 10.0,
 ///     timestamp: "2025-10-27T12:00:00Z".to_string(),
 /// });
-///
-/// // Update the sequence (swap buffers)
 /// sequence.update();
 ///
-/// // Read current sequence
+/// // Step 2: Add more data points (accumulates, not replaced)
+/// sequence.add_point(DataPoint {
+///     id: 2,
+///     value: 20.0,
+///     timestamp: "2025-10-27T12:01:00Z".to_string(),
+/// });
+/// sequence.update();
+///
+/// // Read current sequence - contains all data points from both steps
 /// let current = sequence.current();
-/// assert_eq!(current.len(), 1);
+/// assert_eq!(current.len(), 2);
 /// ```
 #[derive(Debug)]
 pub struct DataPointSequence {
-    buffer: DoubleBuffer<DataPoint>,
+    pool: FlatObjectPool<DataPoint>,
+    current_end: usize,  // End of the current visible sequence
+    next_end: usize,     // End including pending additions
     step: usize,
 }
 
 impl DataPointSequence {
-    /// Create a new DataPointSequence with the specified pool capacity
-    pub fn new(pool_capacity: usize) -> Self {
+    /// Create a new DataPointSequence with the specified buffer size and pool capacity
+    ///
+    /// # Arguments
+    /// * `buffer_size` - Initial size of the backing buffer
+    /// * `pool_capacity` - Capacity for tracking free ranges (not typically used in append-only mode)
+    pub fn new(buffer_size: usize, pool_capacity: usize) -> Self {
         Self {
-            buffer: DoubleBuffer::new(pool_capacity),
+            pool: FlatObjectPool::new(buffer_size, pool_capacity),
+            current_end: 0,
+            next_end: 0,
             step: 0,
         }
     }
@@ -390,48 +407,75 @@ impl DataPointSequence {
         self.step
     }
 
-    /// Add a data point to the next sequence (back buffer)
-    pub fn add_point(&mut self, point: DataPoint) {
-        self.buffer.back_mut().push(point);
-    }
-
-    /// Add multiple data points to the next sequence (back buffer)
-    pub fn add_points(&mut self, points: impl IntoIterator<Item = DataPoint>) {
-        self.buffer.back_mut().extend(points);
-    }
-
-    /// Update the sequence by swapping buffers and incrementing the step counter.
+    /// Add a data point to the next update
     ///
-    /// This makes the back buffer (with newly added points) become the current
-    /// sequence, and prepares a fresh back buffer for the next update.
+    /// The data point is appended to the flat buffer and will become visible
+    /// after the next `update()` call.
+    pub fn add_point(&mut self, point: DataPoint) {
+        // The FlatObjectPool will automatically extend if needed
+        self.pool.set(self.next_end, point);
+        self.next_end += 1;
+    }
+
+    /// Add multiple data points to the next update
+    pub fn add_points(&mut self, points: impl IntoIterator<Item = DataPoint>) {
+        for point in points {
+            self.add_point(point);
+        }
+    }
+
+    /// Update the sequence by making pending additions visible and incrementing the step counter.
+    ///
+    /// This makes all data points added since the last update visible in the current sequence.
+    /// Objects are never erased - the sequence grows over time.
     pub fn update(&mut self) {
-        self.buffer.swap();
+        self.current_end = self.next_end;
         self.step += 1;
     }
 
-    /// Get a reference to the current sequence (front buffer)
+    /// Get a reference to the current sequence (all accumulated data points)
+    ///
+    /// Returns a slice containing all data points from the beginning to the current end.
+    /// This includes all data points added in all previous steps.
     pub fn current(&self) -> &[DataPoint] {
-        self.buffer.front()
+        if self.current_end > 0 {
+            self.pool.get_slice(0, self.current_end)
+        } else {
+            &[]
+        }
     }
 
     /// Get the number of data points in the current sequence
     pub fn len(&self) -> usize {
-        self.buffer.front().len()
+        self.current_end
     }
 
     /// Check if the current sequence is empty
     pub fn is_empty(&self) -> bool {
-        self.buffer.front().is_empty()
+        self.current_end == 0
     }
 
-    /// Clear all data points from both buffers and reset the step counter
+    /// Get the number of data points added but not yet visible (pending update)
+    pub fn pending_count(&self) -> usize {
+        self.next_end - self.current_end
+    }
+
+    /// Get the total buffer capacity
+    pub fn buffer_size(&self) -> usize {
+        self.pool.buffer_size()
+    }
+
+    /// Reset the sequence, clearing all data
+    ///
+    /// Note: This resets the sequence to empty but does not shrink the underlying buffer.
     pub fn clear(&mut self) {
-        self.buffer.clear();
+        let end = self.next_end;
+        self.current_end = 0;
+        self.next_end = 0;
         self.step = 0;
-    }
-
-    /// Get the number of available vectors in the underlying object pool
-    pub fn pool_available(&self) -> usize {
-        self.buffer.pool_available()
+        // Clear the buffer content
+        for i in 0..end {
+            self.pool.set(i, DataPoint::default());
+        }
     }
 }

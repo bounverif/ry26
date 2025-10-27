@@ -92,35 +92,41 @@ The library includes a double buffering system with object pooling for efficient
 
 #### DataPointSequence - High-Level API
 
-For managing sequences of DataPoints with automatic step tracking:
+For managing immutable, append-only sequences of DataPoints with automatic step tracking:
 
 ```rust
 use ry26::{DataPointSequence, DataPoint};
 
-// Create a sequence with object pooling
-let mut sequence = DataPointSequence::new(10);
+// Create a sequence with buffer size 1000 and pool capacity 10
+let mut sequence = DataPointSequence::new(1000, 10);
 
-// Add data points for the next step
+// Step 1: Add initial data point
 sequence.add_point(DataPoint {
     id: 1,
     value: 42.0,
     timestamp: "2025-10-27T12:00:00Z".to_string(),
 });
-
-// Update the sequence (swap buffers and increment step)
 sequence.update();
 
-// Read current sequence
+// Read current sequence (contains 1 point)
 let current = sequence.current();
-println!("Step {}: {} points", sequence.step(), current.len());
+println!("Step {}: {} points", sequence.step(), current.len()); // Step 1: 1 points
 
-// Add multiple points for next step
+// Step 2: Add more points (accumulates, not replaces!)
 sequence.add_points(vec![
     DataPoint { id: 2, value: 84.0, timestamp: "2025-10-27T12:01:00Z".to_string() },
     DataPoint { id: 3, value: 126.0, timestamp: "2025-10-27T12:02:00Z".to_string() },
 ]);
 sequence.update();
+
+// Now contains all 3 points from both steps
+println!("Step {}: {} points", sequence.step(), current.len()); // Step 2: 3 points
 ```
+
+**Key Features:**
+- **Immutable objects**: DataPoints are never modified once added
+- **Append-only**: Objects accumulate over steps, never erased
+- **Flat buffer**: Uses FlatObjectPool for efficient contiguous storage
 
 #### DoubleBuffer - Low-Level API
 
@@ -194,6 +200,7 @@ The double buffering technique allows for:
 - **Sequential updates**: Swap buffers to atomically update the collection
 - **Memory efficiency**: Object pool reuses allocated vectors, reducing allocations
 - **Flat memory layout**: FlatObjectPool provides better cache locality with contiguous storage
+- **Append-only semantics**: DataPointSequence accumulates immutable objects over time
 - **Step tracking**: DataPointSequence automatically tracks update steps
 
 ## Testing
